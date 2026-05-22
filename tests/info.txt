@@ -1,0 +1,14 @@
+# # 所有测试
+# pytest tests/ -v
+
+# # 只看单元测试（不依赖真实数据，跑得快）
+# pytest tests/test_parent_retriever_unit.py -v
+
+# # 只看效果测试（需要提前入库的数据）
+# pytest tests/test_retrieval_effectiveness.py -v
+
+# # 想看详细失败信息
+# pytest tests/ -v --tb=long
+
+# # 只看某个具体测试
+# pytest tests/test_parent_retriever_unit.py::TestParentRetrieverInvoke::test_normal_dedup -v

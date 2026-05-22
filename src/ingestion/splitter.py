@@ -1,10 +1,11 @@
 """智能文档切分模块。
 
 职责：
-- 按 Markdown 标题（h1/h2）进行第一阶段切分
+- 按 Markdown 标题（h1/h2/h3）进行第一阶段切分
 - 代码块边界保护，确保 ``` 块不被截断
 - 超大段递归字符切分
 - 传播文档级 + 标题级 metadata
+- 父子双层切分（parent→LLM, child→embedding）
 """
 
 import re
@@ -17,11 +18,12 @@ from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharac
 HEADERS_TO_SPLIT_ON = [
     ("#", "h1"),
     ("##", "h2"),
+    ("###", "h3"),
 ]
 
 
 class SmartDocumentSplitter:
-    """智能文档切分器：标题切分 + 代码块保护 + 递归字符切分。"""
+    """智能文档切分器：标题切分 + 代码块保护 + 递归字符切分 + 父子双层切分。"""
 
     def __init__(self, chunk_size: int = 2000, chunk_overlap: int = 200):
         self.chunk_size = chunk_size
@@ -114,7 +116,7 @@ class SmartDocumentSplitter:
             # 第一阶段：按标题切分
             header_chunks = self.markdown_splitter.split_text(doc.page_content)
 
-            chunk_index = 0
+            chunk_id = 0
             for chunk in header_chunks:
                 # 第二阶段：代码块保护 + 递归切分
                 # 先用 _protect_code_blocks 得到安全段
@@ -130,7 +132,7 @@ class SmartDocumentSplitter:
                     for sub_chunk in sub_chunks:
                         # 合并：文档级 meta + 标题层级 meta（h1-h2）
                         merged = {**doc_meta, **chunk.metadata}
-                        merged["chunk_index"] = chunk_index
+                        merged["chunk_id"] = chunk_id
 
                         # 检测代码块信息
                         has_code, code_language = _extract_code_info(sub_chunk)
@@ -141,9 +143,134 @@ class SmartDocumentSplitter:
                             page_content=sub_chunk,
                             metadata=merged
                         ))
-                        chunk_index += 1
+                        chunk_id += 1
 
         return final_chunks
+
+    def parent_child_split(
+        self,
+        documents: List[Document],
+        parent_chunk_size: int = 2000,
+        parent_overlap: int = 200,
+        child_chunk_size: int = 500,
+        child_overlap: int = 100,
+    ) -> Tuple[List[Document], List[Document]]:
+        """父子双层切分：返回 (parent_docs, child_docs)。
+
+        第 1 遍 — parent 层：
+            复用 smart_split 逻辑（header 边界 + 代码块保护），
+            但用 parent_chunk_size 控制最大块尺寸。
+            parent 是最终给 LLM 的上下文单位。
+
+        第 2 遍 — child 层：
+            对每个 parent 内部用 RecursiveCharacterTextSplitter
+            以 child_chunk_size 做进一步切分。
+            不保护代码块（被截断不影响 embedding 精度）。
+            child 只用于嵌入和检索，metadata 中记录 parent_chunk_id。
+
+        Args:
+            documents: 原始 Document 列表（含完整 metadata）。
+            parent_chunk_size: parent 层 chunk 上限。
+            parent_overlap: parent 层重叠字符数。
+            child_chunk_size: child 层目标 chunk 尺寸（嵌入精度最优）。
+            child_overlap: child 层重叠字符数。
+
+        Returns:
+            (parent_docs, child_docs):
+                parent_docs — 给 LLM 的大块（存 DocStore），
+                child_docs  — 给 embedding 的小块（存 Chroma）。
+        """
+        # ============================================================
+        # Phase 1：构建 parent chunks（代码块保护 + header 语义边界）
+        # ============================================================
+        # 创建独立实例避免修改 self 的默认参数
+        # 分隔符列表与 __init__ 保持一致（复制而非引用，避免意外耦合）
+        parent_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=parent_chunk_size,
+            chunk_overlap=parent_overlap,
+            separators=[
+                "\n```\n",
+                "\n```",
+                "\n\n",
+                "\n",
+                ".", "!", "?", ";",
+                " ",
+                "",
+            ],
+            length_function=len,
+        )
+
+        parent_docs: List[Document] = []
+        p_id = 0  # parent chunk_id（每篇文档独立编号）
+
+        for doc in documents:
+            doc_meta = dict(doc.metadata)
+
+            # 第 1 阶段：按标题切分（h1/h2/h3）
+            header_chunks = self.markdown_splitter.split_text(doc.page_content)
+
+            for chunk in header_chunks:
+                # 第 2 阶段：代码块保护
+                safe_segments = self._protect_code_blocks(
+                    chunk.page_content, parent_chunk_size
+                )
+
+                for segment in safe_segments:
+                    # 第 3 阶段：递归切分（受 parent_chunk_size 上限保护）
+                    sub_parts = parent_splitter.split_text(segment)
+
+                    for part in sub_parts:
+                        merged = {**doc_meta, **chunk.metadata}
+                        merged["chunk_id"] = p_id
+
+                        has_code, code_language = _extract_code_info(part)
+                        merged["has_code"] = has_code
+                        merged["code_language"] = code_language
+
+                        parent_docs.append(Document(
+                            page_content=part, metadata=merged
+                        ))
+                        p_id += 1
+
+        # ============================================================
+        # Phase 2：对每个 parent 切 child（无代码块保护）
+        # ============================================================
+        child_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=child_chunk_size,
+            chunk_overlap=child_overlap,
+            separators=[
+                "\n```\n",  # 作为高优先级分隔符（在代码块边界处切）
+                "\n```",
+                "\n\n",
+                "\n",
+                ".", "!", "?", ";",
+                " ",
+                "",
+            ],
+            length_function=len,
+        )
+
+        child_docs: List[Document] = []
+        c_id = 0  # child chunk_id（每篇文档独立编号）
+
+        for parent in parent_docs:
+            # 从 parent 继承所有 metadata，覆盖/新增特有字段
+            raw_children = child_splitter.split_text(parent.page_content)
+
+            for text in raw_children:
+                merged = {
+                    **parent.metadata,
+                    "chunk_id": c_id,
+                    "parent_chunk_id": parent.metadata["chunk_id"],
+                }
+                has_code, code_language = _extract_code_info(text)
+                merged["has_code"] = has_code
+                merged["code_language"] = code_language
+
+                child_docs.append(Document(page_content=text, metadata=merged))
+                c_id += 1
+
+        return parent_docs, child_docs
 
 
 def _extract_code_info(content: str) -> Tuple[bool, str]:

@@ -12,9 +12,10 @@
 
 使用方式：
     from src.core.config import settings
-    from src.core.factories import create_rag_chain
+    from src.core.factories import create_rag_chain, create_parent_retriever
 
     chain = create_rag_chain(settings)
+    retriever = create_parent_retriever(settings)  # 搜 child 返回 parent
 """
 
 from typing import Any, Dict, List, Optional
@@ -166,6 +167,54 @@ def create_retriever(
     return retriever  # type: ignore[return-value]
 
 
+def create_parent_retriever(
+    settings: Settings,
+    search_type: str = "similarity",
+    search_kwargs: Optional[Dict[str, Any]] = None,
+):
+    """创建 ParentRetriever：搜 child Chroma，返回 parent DocStore。
+
+    与 create_retriever 的区别：
+        create_retriever 直接搜 Chroma 返回跟 query 最匹配的 chunks（child 粒度）。
+        create_parent_retriever 搜 child → 去重 → 返回 parent chunks（含完整上下文）。
+
+    调用方清楚知道自己拿到的是 parent 粒度的检索器，
+    两者都满足 RetrieverProtocol，接口一致。
+
+    Args:
+        settings: Settings 配置实例
+        search_type: 检索类型，默认 "similarity"
+        search_kwargs: 检索参数，默认 {"k": 5}
+
+    Returns:
+        ParentRetriever 实例（自动满足 RetrieverProtocol）
+    """
+    from src.retriever.base_retriever import VectorRetriever
+    from src.retriever.parent_retriever import ParentRetriever
+    from src.ingestion.doc_store import DocStore
+
+    embeddings = create_embeddings(settings)
+    vectorstore = create_vectorstore(settings, embeddings)
+
+    kwargs = search_kwargs.copy() if search_kwargs else {}
+    kwargs.setdefault("k", 5)
+
+    child_retriever = VectorRetriever(
+        vectorstore=vectorstore,
+        search_type=search_type,
+        search_kwargs=kwargs,
+    )
+    logger.info(
+        "ParentRetriever 实例创建",
+        search_type=search_type,
+        search_kwargs=kwargs,
+    )
+
+    store = DocStore(settings.doc_store_path)
+    store.load()
+    return ParentRetriever(child_retriever=child_retriever, doc_store=store)
+
+
 def create_llm(provider: str, settings: Settings) -> BaseChatModel:
     """根据 provider 和 settings 创建 LLM 实例（单例缓存）。
 
@@ -217,6 +266,7 @@ def create_llm(provider: str, settings: Settings) -> BaseChatModel:
 __all__ = [
     "create_embeddings",
     "create_llm",
+    "create_parent_retriever",
     "create_retriever",
     "create_vectorstore",
 ]

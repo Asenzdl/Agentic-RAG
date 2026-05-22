@@ -25,12 +25,14 @@ from .base_retriever import (
     UnsupportedSearchTypeError,
     VectorRetriever,
 )
+from .parent_retriever import ParentRetriever
 from .protocols import RetrieverProtocol
 
 __all__ = [
     # 协议
     "RetrieverProtocol",
     # 实现
+    "ParentRetriever",
     "VectorRetriever",
     # 异常
     "RetrievalError",

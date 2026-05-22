@@ -82,6 +82,12 @@ class Settings(BaseSettings):
         description="评估报告输出路径",
     )
 
+    # ===== DocStore 配置 =====
+    doc_store_path: str = Field(
+        default="db/doc_store.json",
+        description="DocStore（parent chunks）持久化 JSON 文件路径",
+    )
+
     # ===== 检查点路径（Phase 2 预留）=====
     checkpoint_db_path: str = Field(
         default="db/checkpoints.db", description="LangGraph 检查点数据库路径"

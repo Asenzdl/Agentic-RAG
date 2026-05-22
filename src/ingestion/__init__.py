@@ -25,6 +25,7 @@
 """
 
 # 注意：导入顺序很重要，先导入不依赖其他模块的子模块，最后导入 load_data
+from .doc_store import DocStore
 from .splitter import SmartDocumentSplitter
 from .vectorstore import ingest_to_chroma
 # load_data 依赖上面的模块，必须最后导入
@@ -34,6 +35,7 @@ __all__ = [
     # 高层便捷接口
     "run_pipeline",
     # 可单独使用的组件
+    "DocStore",
     "SmartDocumentSplitter",
     "ingest_to_chroma",
 ]
