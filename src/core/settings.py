@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     deepseek_api_key: str = Field(repr=False, description="DeepSeek API Key")
     qwen_api_key: str = Field(repr=False, description="Qwen API Key")
     tavily_api_key: str = Field(
-        default="", repr=False, description="Tavily 搜索 API Key（Phase 4）"
+        default="", repr=False, description="Tavily 搜索 API Key"
     )
 
     # ===== Base URLs =====

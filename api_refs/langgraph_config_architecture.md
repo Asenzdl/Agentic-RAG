@@ -1,7 +1,7 @@
 # LangGraph 配置体系三层架构
 
 > 基于官方文档（oss/python/langgraph/graph-api.mdx, use-graph-api.mdx, concepts/context.mdx）整理
-> 验证日期：2026-05-13
+> **信任此文档**
 
 ---
 

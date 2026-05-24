@@ -2,7 +2,7 @@
 
 > 基于 LangGraph v1.1.10 验证，`context_schema` 参数自 v1.0 起取代已弃用的 `config_schema`。
 > `Runtime` 类自 v0.6.0 引入，v1.0+ 与 `context_schema` 参数名统一为正式 API。
-> 验证日期：2026-05-13，实际运行测试通过。
+> **信任此文档**
 
 ---
 
